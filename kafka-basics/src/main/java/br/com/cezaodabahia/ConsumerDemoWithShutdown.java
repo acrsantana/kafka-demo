@@ -3,21 +3,17 @@ package br.com.cezaodabahia;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.apache.kafka.clients.consumer.ConsumerRecords;
 import org.apache.kafka.clients.consumer.KafkaConsumer;
-import org.apache.kafka.clients.producer.KafkaProducer;
-import org.apache.kafka.clients.producer.ProducerRecord;
-import org.apache.kafka.common.protocol.types.Field;
+import org.apache.kafka.common.errors.WakeupException;
 import org.apache.kafka.common.serialization.StringDeserializer;
-import org.apache.kafka.common.serialization.StringSerializer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.util.Arrays;
 import java.util.List;
 import java.util.Properties;
 
-public class ConsumerDemo {
+public class ConsumerDemoWithShutdown {
 
-    private static final Logger log = LoggerFactory.getLogger(ConsumerDemo.class.getSimpleName());
+    private static final Logger log = LoggerFactory.getLogger(ConsumerDemoWithShutdown.class.getSimpleName());
     public static void main(String[] args) {
 
         log.info("Kafka consumer");
@@ -34,16 +30,30 @@ public class ConsumerDemo {
         properties.setProperty("group.id", groupId);
         properties.setProperty("auto.offset.reset", offset);
 
-        // Criando o consumer - os generics correspondem aos tipos dos serializers
-
         try (KafkaConsumer<String, String> consumer = new KafkaConsumer<>(properties)){
+
+            // Referencia para a thread main
+            final Thread mainThread = Thread.currentThread();
+
+            // adicionando um hook de shutdown
+            Runtime.getRuntime().addShutdownHook(new Thread(){
+                public void run() {
+                    log.info("Shutdown detected, waking up...");
+                    consumer.wakeup();
+                    try {
+                        mainThread.join();
+                    } catch (InterruptedException e) {
+                        e.printStackTrace();
+                    }
+                }
+            });
+
             // Assinando um tópico
             consumer.subscribe(List.of(topic));
 
             // Lendo dados do tópico
 
             while (true){
-                log.info("Polling...");
                 ConsumerRecords<String, String> records = consumer.poll(3000);
 
                 for (ConsumerRecord<String, String> record: records){
@@ -51,6 +61,12 @@ public class ConsumerDemo {
                     log.info("Partition: " + record.partition() + " | Offset: " + record.offset());
                 }
             }
+        } catch (WakeupException e) {
+            log.info("Consumer is starting to shut down");
+        } catch (Exception e) {
+            log.error("Unexpected exception in the consumer", e);
+        } finally {
+            log.info("The consumer is shut down");
         }
 
     }
